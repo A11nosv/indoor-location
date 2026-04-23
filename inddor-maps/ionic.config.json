@@ -1,0 +1,7 @@
+{
+  "name": "inddor-maps",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "angular-standalone"
+}

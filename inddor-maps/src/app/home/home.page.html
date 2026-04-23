@@ -1,0 +1,28 @@
+<ion-header [translucent]="true">
+  <ion-toolbar color="primary">
+    <ion-buttons slot="start">
+      <ion-menu-button></ion-menu-button>
+    </ion-buttons>
+    <ion-title>
+      Indoor Maps Creator
+    </ion-title>
+    <ion-buttons slot="end">
+      <ion-button (click)="newMap()">Nuevo Mapa</ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content [fullscreen]="true" scrollY="false">
+  <div class="editor-layout">
+    <app-toolbox></app-toolbox>
+    
+    <div class="canvas-area">
+      <div class="map-info" *ngIf="currentMap$ | async as map">
+        <span>{{map.name}} ({{map.dimensions.width}}x{{map.dimensions.height}}m)</span>
+      </div>
+      <app-map-editor></app-map-editor>
+    </div>
+
+    <app-properties-panel></app-properties-panel>
+  </div>
+</ion-content>
