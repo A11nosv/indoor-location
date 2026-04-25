@@ -20,4 +20,6 @@ export interface BLEModel {
   imageUrl?: string;
   datasheetUrl?: string;
   description?: string;
+  defaultColor?: string;
+  defaultShape?: 'rect' | 'circle' | 'triangle' | 'star';
 }

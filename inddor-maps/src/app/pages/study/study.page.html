@@ -5,6 +5,10 @@
     </ion-buttons>
     <ion-title>Estudio de Cobertura BLE</ion-title>
     <ion-buttons slot="end">
+      <ion-button (click)="saveStudyMap()" color="light">
+        <ion-icon slot="start" name="save-outline"></ion-icon>
+        Guardar Distribución
+      </ion-button>
       <ion-button (click)="importMap()">
         <ion-icon slot="start" name="map-outline"></ion-icon>
         Importar Mapa
@@ -26,9 +30,14 @@
           <ion-label>Posicionar Baliza</ion-label>
         </ion-item>
 
-        <ion-item button (click)="generateAnalysis()" [color]="showHeatmap ? 'success' : ''">
+        <ion-item button (click)="generateAnalysis()" [color]="showHeatmap ? 'success' : 'primary'">
           <ion-icon slot="start" name="analytics-outline"></ion-icon>
-          <ion-label>Mostrar Mapa de Calor</ion-label>
+          <ion-label>Triangular</ion-label>
+        </ion-item>
+
+        <ion-item button (click)="clearBeacons()" color="danger">
+          <ion-icon slot="start" name="trash-outline"></ion-icon>
+          <ion-label>Borrar todas las balizas</ion-label>
         </ion-item>
 
         <ion-list-header>
@@ -39,7 +48,30 @@
           <ion-icon slot="start" name="color-wand-outline"></ion-icon>
           <ion-label>Propuesta Automática</ion-label>
         </ion-item>
+
+        <ion-item button (click)="goToInstallation()" color="tertiary">
+          <ion-icon slot="start" name="construct-outline"></ion-icon>
+          <ion-label>Instalación</ion-label>
+        </ion-item>
       </ion-list>
+
+      <!-- Nueva Leyenda de Balizas -->
+      <div class="beacon-legend" *ngIf="(beaconLegend$ | async) as legends">
+        <ion-list-header *ngIf="legends.length > 0">
+          <ion-label>Leyenda de Balizas</ion-label>
+        </ion-list-header>
+        
+        <div class="legend-item" *ngFor="let item of legends">
+          <div class="shape-preview" 
+            [style.background-color]="item.shape === 'triangle' ? 'transparent' : item.color" 
+            [style.border-bottom-color]="item.shape === 'triangle' ? item.color : 'transparent'"
+            [attr.data-shape]="item.shape"></div>
+          <div class="legend-text">
+            <strong>{{item.name}}</strong>
+            <span>Rango óptimo: {{item.optimalRange}}m</span>
+          </div>
+        </div>
+      </div>
 
       <div class="legend" *ngIf="showHeatmap">
         <h6>Calidad de Triangulación</h6>

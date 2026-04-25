@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, OnDestroy, ViewChild, AfterViewInit } from '@angular/core';
+import { Component, ElementRef, OnInit, OnDestroy, ViewChild, AfterViewInit, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import * as fabric from 'fabric';
 import { MapStateService } from '../../services/map-state.service';
@@ -14,6 +14,7 @@ import { Subscription } from 'rxjs';
 })
 export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
   @ViewChild('container') container!: ElementRef;
+  @Input() readonly: boolean = false;
   
   private canvas!: fabric.Canvas;
   private subscriptions: Subscription = new Subscription();
@@ -23,6 +24,7 @@ export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
   private activePolygon: fabric.Polyline | null = null;
   private polygonPoints: fabric.Point[] = [];
   private drawingMode: { mode: string, heightZ: number } | null = null;
+  private dragStartPositions: Map<string, { left: number, top: number }> = new Map();
 
   constructor(private mapState: MapStateService) {}
 
@@ -43,45 +45,83 @@ export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
   private async initCanvas() {
     this.canvas = new fabric.Canvas('mapCanvas', {
       backgroundColor: '#ffffff',
-      selection: true,
+      selection: !this.readonly,
       preserveObjectStacking: true
     });
 
     this.updateCanvasSize();
 
     // Fabric.js Events
-    this.canvas.on('mouse:down', (options) => this.handleMouseDown(options));
-    this.canvas.on('mouse:move', (options) => this.handleMouseMove(options));
-    this.canvas.on('mouse:dblclick', () => this.finishPolygon());
-
-    this.canvas.on('object:moving', (options) => {
-      const map = (this.mapState as any).currentMapSubject?.value;
-      if (!map) return;
-      
-      const grid = map.scale * 0.1; // Snap to 0.1m (10cm)
-      options.target!.set({
-        left: Math.round(options.target!.left! / grid) * grid,
-        top: Math.round(options.target!.top! / grid) * grid
+    if (!this.readonly) {
+      this.canvas.on('mouse:down', (options) => {
+        this.handleMouseDown(options);
+        const target = options.target as any;
+        if (target && target.data?.type === 'wall') {
+          this.dragStartPositions.clear();
+          this.canvas.getObjects().filter(obj => (obj as any).data?.type === 'wall').forEach(wall => {
+            this.dragStartPositions.set((wall as any).data.id, { left: wall.left!, top: wall.top! });
+          });
+        }
       });
-    });
+      this.canvas.on('mouse:move', (options) => this.handleMouseMove(options));
+      this.canvas.on('mouse:dblclick', () => this.finishPolygon());
 
-    this.canvas.on('object:scaling', (options) => {
-      const map = (this.mapState as any).currentMapSubject?.value;
-      if (!map) return;
+      this.canvas.on('object:moving', (options) => {
+        const target = options.target as any;
+        const map = (this.mapState as any).currentMapSubject?.value;
+        if (!map) return;
+        const grid = map.scale * 0.1;
 
-      const grid = map.scale * 0.1;
-      const target = options.target!;
-      
-      target.set({
-        width: Math.round((target.width! * target.scaleX!) / grid) * grid / target.scaleX!,
-        height: Math.round((target.height! * target.scaleY!) / grid) * grid / target.scaleY!
+        if (target && target.data?.type === 'wall' && this.dragStartPositions.has(target.data.id)) {
+          const startPos = this.dragStartPositions.get(target.data.id)!;
+          const dx = target.left! - startPos.left;
+          const dy = target.top! - startPos.top;
+
+          this.canvas.getObjects().filter(obj => (obj as any).data?.type === 'wall' && obj !== target).forEach(wall => {
+            wall.set({
+              left: this.dragStartPositions.get((wall as any).data.id)!.left + dx,
+              top: this.dragStartPositions.get((wall as any).data.id)!.top + dy
+            });
+            wall.setCoords();
+          });
+        } else if (target) {
+          target.set({
+            left: Math.round(target.left! / grid) * grid,
+            top: Math.round(target.top! / grid) * grid
+          });
+        }
       });
-    });
 
-    this.canvas.on('object:modified', (e) => this.handleObjectChange(e));
-    this.canvas.on('selection:created', (e) => this.handleSelection(e));
-    this.canvas.on('selection:updated', (e) => this.handleSelection(e));
-    this.canvas.on('selection:cleared', () => this.mapState.selectObject(null));
+      this.canvas.on('object:scaling', (options) => {
+        const map = (this.mapState as any).currentMapSubject?.value;
+        if (!map) return;
+
+        const grid = map.scale * 0.1;
+        const target = options.target!;
+        
+        target.set({
+          width: Math.round((target.width! * target.scaleX!) / grid) * grid / target.scaleX!,
+          height: Math.round((target.height! * target.scaleY!) / grid) * grid / target.scaleY!
+        });
+      });
+
+      this.canvas.on('object:modified', (e) => this.handleObjectChange(e));
+      this.canvas.on('selection:created', (e) => this.handleSelection(e));
+      this.canvas.on('selection:updated', (e) => this.handleSelection(e));
+      this.canvas.on('selection:cleared', () => this.mapState.selectObject(null));
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          const activeObject = this.canvas.getActiveObject();
+          if (activeObject && (activeObject as any).data) {
+            this.mapState.removeObject((activeObject as any).data.id);
+            this.canvas.remove(activeObject);
+            this.canvas.discardActiveObject();
+            this.canvas.renderAll();
+          }
+        }
+      });
+    }
 
     window.addEventListener('resize', () => this.updateCanvasSize());
   }
@@ -110,12 +150,28 @@ export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
         this.renderHeatmap(data);
       })
     );
+
+    this.subscriptions.add(
+      this.mapState.selectedObject$.subscribe(selected => {
+        if (!this.canvas) return;
+        if (selected) {
+          const fabricObj = this.canvas.getObjects().find(obj => (obj as any).data?.id === selected.id);
+          if (fabricObj && this.canvas.getActiveObject() !== fabricObj) {
+            this.canvas.setActiveObject(fabricObj);
+            this.canvas.renderAll();
+          }
+        } else if (this.canvas.getActiveObject()) {
+          this.canvas.discardActiveObject();
+          this.canvas.renderAll();
+        }
+      })
+    );
   }
 
   private renderHeatmap(data: number[][] | null) {
-    // Clear old heatmap
-    const objects = this.canvas.getObjects().filter(obj => (obj as any).isHeatmap);
-    this.canvas.remove(...objects);
+    // Clear old heatmap thoroughly
+    const heatmapObjects = this.canvas.getObjects().filter(obj => (obj as any).isHeatmap);
+    this.canvas.remove(...heatmapObjects);
 
     if (!data) {
       this.canvas.renderAll();
@@ -123,14 +179,14 @@ export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
     }
 
     const map = (this.mapState as any).currentMapSubject.value;
-    const res = 0.5; // Matches StudyEngine resolution
+    const res = 0.25; // Higher resolution: 0.25 meters
     const scale = map.scale;
 
     const rects = [];
     for (let r = 0; r < data.length; r++) {
       for (let c = 0; c < data[r].length; c++) {
         const quality = data[r][c];
-        if (quality === 0) continue;
+        if (quality <= 0.05) continue; // Skip very low quality for performance and contrast
 
         const color = this.getHeatmapColor(quality);
         rects.push(new fabric.Rect({
@@ -139,7 +195,7 @@ export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
           width: res * scale,
           height: res * scale,
           fill: color,
-          opacity: 0.4,
+          opacity: 0.5, // Slightly higher opacity for better visibility
           selectable: false,
           evented: false,
           // @ts-ignore
@@ -149,8 +205,11 @@ export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
     }
 
     this.canvas.add(...rects);
-    // Beacons should be visible above heatmap
-    this.canvas.getObjects().filter(o => (o as any).data?.type === 'beacon').forEach(b => b.bringToFront());
+    // Ensure beacons are always on top
+    this.canvas.getObjects()
+      .filter(o => (o as any).data?.type === 'beacon')
+      .forEach(b => this.canvas.bringObjectToFront(b));
+    
     this.canvas.renderAll();
   }
 
@@ -296,6 +355,11 @@ export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
     const left = obj.x * scale;
     const top = obj.y * scale;
 
+    const interactionProps = {
+      selectable: !this.readonly,
+      evented: !this.readonly
+    };
+
     if (obj.points && obj.points.length > 0) {
       fObj = new fabric.Polygon(obj.points.map(p => ({ x: p.x * scale, y: p.y * scale })), {
         left, top,
@@ -303,18 +367,61 @@ export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
         stroke: '#5d2906',
         strokeWidth: 2,
         angle: obj.rotation,
+        ...interactionProps,
         // @ts-ignore
         data: obj
       });
+    } else if (obj.type === 'beacon') {
+      const width = (obj.width || 0.3) * scale;
+      const height = (obj.height || 0.3) * scale;
+      const commonProps = {
+        left, top,
+        fill: obj.color || '#007bff',
+        stroke: '#0056b3',
+        strokeWidth: 1,
+        angle: obj.rotation,
+        originX: 'center' as const,
+        originY: 'center' as const,
+        ...interactionProps,
+        // @ts-ignore
+        data: obj
+      };
+
+      switch (obj.shape) {
+        case 'circle':
+          fObj = new fabric.Circle({ 
+            ...commonProps, 
+            radius: width / 2,
+            lockUniScaling: true // Keep circles circular
+          });
+          break;
+        case 'triangle':
+          fObj = new fabric.Triangle({ ...commonProps, width, height });
+          break;
+        case 'star':
+          // Adjusted star to use actual width/height
+          fObj = new fabric.Polygon([
+            {x: 0, y: -height/2}, {x: width/4, y: -height/6}, {x: width/2, y: -height/6},
+            {x: width/3, y: height/8}, {x: width/2, y: height/2}, {x: 0, y: height/4},
+            {x: -width/2, y: height/2}, {x: -width/3, y: height/8}, {x: -width/2, y: -height/6},
+            {x: -width/4, y: -height/6}
+          ], commonProps);
+          break;
+        default:
+          fObj = new fabric.Rect({ ...commonProps, width, height });
+      }
     } else {
       const width = obj.width * scale;
       const height = obj.height * scale;
       fObj = new fabric.Rect({
         left, top, width, height,
-        fill: obj.type === 'wall' ? '#333333' : '#8b4513',
+        fill: obj.color || (obj.type === 'wall' ? '#333333' : '#8b4513'),
         stroke: obj.type === 'wall' ? undefined : '#5d2906',
         strokeWidth: obj.type === 'wall' ? 0 : 2,
         angle: obj.rotation,
+        originX: 'left',
+        originY: obj.type === 'wall' ? 'center' : 'top',
+        ...interactionProps,
         // @ts-ignore
         data: obj
       });
@@ -328,20 +435,36 @@ export class MapEditorComponent implements OnInit, OnDestroy, AfterViewInit {
     const map = (this.mapState as any).currentMapSubject?.value;
     if (!map) return;
     const scale = map.scale;
-    const updates: Partial<MapObject> = {
-      x: fObj.left / scale,
-      y: fObj.top / scale,
-      width: (fObj.width * fObj.scaleX) / scale,
-      height: (fObj.height * fObj.scaleY) / scale,
-      rotation: fObj.angle
-    };
-    this.isInternalUpdate = true;
-    this.mapState.updateObject(fObj.data.id, updates);
-    this.isInternalUpdate = false;
+
+    if (fObj.data.type === 'wall') {
+      this.isInternalUpdate = true;
+      this.canvas.getObjects().filter(obj => (obj as any).data?.type === 'wall').forEach(wall => {
+        const updates: Partial<MapObject> = {
+          x: wall.left! / scale,
+          y: wall.top! / scale,
+          width: (wall.width! * wall.scaleX!) / scale,
+          height: (wall.height! * wall.scaleY!) / scale,
+          rotation: wall.angle
+        };
+        this.mapState.updateObject((wall as any).data.id, updates);
+      });
+      this.isInternalUpdate = false;
+    } else {
+      const updates: Partial<MapObject> = {
+        x: fObj.left / scale,
+        y: fObj.top / scale,
+        width: (fObj.width * fObj.scaleX) / scale,
+        height: (fObj.height * fObj.scaleY) / scale,
+        rotation: fObj.angle
+      };
+      this.isInternalUpdate = true;
+      this.mapState.updateObject(fObj.data.id, updates);
+      this.isInternalUpdate = false;
+    }
   }
 
   private handleSelection(e: any) {
-    const selected = e.selected ? e.selected[0] : null;
+    const selected = e.selected ? e.selected[0] as any : null;
     if (selected && selected.data) {
       this.mapState.selectObject(selected.data);
     } else {

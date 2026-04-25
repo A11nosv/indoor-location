@@ -19,8 +19,21 @@ export class MapStateService {
   public heatmapData$ = this.heatmapSubject.asObservable();
 
   constructor() {
-    // Initial dummy map for development
-    this.createNewMap('Plano Nuevo', 20, 15);
+    // Try to load from localStorage first
+    const savedMap = localStorage.getItem('last_indoor_map');
+    if (savedMap) {
+      this.loadFromJson(savedMap);
+    } else {
+      // Initial dummy map for development
+      this.createNewMap('Plano Nuevo', 20, 15);
+    }
+
+    // Subscribe to save changes automatically
+    this.currentMap$.subscribe(map => {
+      if (map) {
+        localStorage.setItem('last_indoor_map', JSON.stringify(map));
+      }
+    });
   }
 
   createNewMap(name: string, width: number, height: number) {
@@ -81,7 +94,31 @@ export class MapStateService {
   }
 
   setHeatmapData(data: number[][] | null) {
-    this.heatmapSubject.next(data);
+    // Force refresh by creating a new reference even if data is the same
+    this.heatmapSubject.next(data ? [...data.map(row => [...row])] : null);
+  }
+
+  saveCurrentMap() {
+    const current = this.currentMapSubject.value;
+    if (current) {
+      const saved = this.getSavedMaps();
+      const index = saved.findIndex((m: any) => m.id === current.id);
+      if (index >= 0) {
+        saved[index] = current;
+      } else {
+        saved.push(current);
+      }
+      localStorage.setItem('saved_indoor_maps', JSON.stringify(saved));
+    }
+  }
+
+  getSavedMaps(): IndoorMap[] {
+    return JSON.parse(localStorage.getItem('saved_indoor_maps') || '[]');
+  }
+
+  deleteMap(id: string) {
+    const saved = this.getSavedMaps().filter(m => m.id !== id);
+    localStorage.setItem('saved_indoor_maps', JSON.stringify(saved));
   }
 
   exportToJson(): string {

@@ -27,6 +27,7 @@ export interface MapObject {
   heightZ: number; // Height from floor in meters
   rotation: number; // degrees
   color?: string;
+  shape?: 'rect' | 'circle' | 'triangle' | 'star';
   opacity?: number;
   locked?: boolean;
   metadata?: Record<string, any>;

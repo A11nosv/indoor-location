@@ -14,6 +14,14 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/study/study.page').then((m) => m.StudyPage),
   },
   {
+    path: 'installation',
+    loadComponent: () => import('./pages/installation/installation.page').then((m) => m.InstallationPage),
+  },
+  {
+    path: 'revision',
+    loadComponent: () => import('./pages/revision/revision.page').then((m) => m.RevisionPage),
+  },
+  {
     path: '',
     redirectTo: 'home',
     pathMatch: 'full',

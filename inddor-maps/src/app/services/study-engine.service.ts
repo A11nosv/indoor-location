@@ -13,20 +13,18 @@ export class StudyEngineService {
    * Result is a score from 0 (no coverage) to 1 (perfect triangulation).
    */
   calculateQualityAtPoint(x: number, y: number, beacons: MapObject[], map: IndoorMap): number {
+    // If point is outside walls, quality is 0
+    if (!this.isPointInsideRoom(x, y, map)) return 0;
+
     const visibleBeacons = beacons.filter(b => {
       const dist = Math.sqrt(Math.pow(b.x - x, 2) + Math.pow(b.y - y, 2));
-      // For now, simple range check. 
-      // In future, we can add wall-clipping logic.
       return dist <= (b.metadata?.['maxRange'] || 20);
     });
 
-    if (visibleBeacons.length < 3) return 0; // Need at least 3 for trilateration
+    if (visibleBeacons.length < 3) return 0;
 
-    // Simple GDOP approximation: 
-    // High quality if beacons are well distributed around the point
-    let quality = 0;
-    
-    // Check angular distribution
+    // Angular distribution (GDOP-like)
+    // We want beacons to be spread around the user
     const angles = visibleBeacons.map(b => Math.atan2(b.y - y, b.x - x));
     angles.sort((a, b) => a - b);
     
@@ -38,21 +36,24 @@ export class StudyEngineService {
       if (gap > maxGap) maxGap = gap;
     }
 
-    // A gap of 360 (2PI) means all beacons are in one line.
-    // A gap of 120 (for 3 beacons) is ideal.
-    const gapScore = Math.max(0, 1 - (maxGap / (2 * Math.PI)));
+    // A gap of 120 deg (2.09 rad) is ideal for 3 beacons.
+    // We penalize gaps larger than 180 deg (PI) heavily.
+    const gapScore = Math.pow(Math.max(0, 1 - (maxGap / (1.5 * Math.PI))), 2);
     
     // Distance score: are beacons at optimal distance?
     const dists = visibleBeacons.map(b => Math.sqrt(Math.pow(b.x - x, 2) + Math.pow(b.y - y, 2)));
     const avgDist = dists.reduce((a, b) => a + b, 0) / dists.length;
-    const optimalDist = visibleBeacons[0].metadata?.['optimalRange'] || 2.5;
-    const distScore = Math.max(0, 1 - Math.abs(avgDist - optimalDist) / optimalDist);
+    const optimalDist = 3.0; // 3 meters is a good sweet spot for BLE
+    
+    // Use a bell curve for distance score to increase contrast
+    const distScore = Math.exp(-Math.pow(avgDist - optimalDist, 2) / 8);
 
-    return (gapScore * 0.7) + (distScore * 0.3);
+    // Final score with high contrast
+    return (gapScore * 0.6) + (distScore * 0.4);
   }
 
   generateHeatmap(map: IndoorMap, beacons: MapObject[]): number[][] {
-    const gridResolution = 0.5; // 0.5 meters
+    const gridResolution = 0.25; // Higher resolution: 0.25 meters
     const rows = Math.ceil(map.dimensions.height / gridResolution);
     const cols = Math.ceil(map.dimensions.width / gridResolution);
     
@@ -69,20 +70,85 @@ export class StudyEngineService {
     return heatmap;
   }
 
-  proposePlacement(map: IndoorMap, model: BLEModel): MapObject[] {
-    // Basic proposal logic: Place beacons in corners and center to maximize angular spread
-    const margin = 2; // meters from walls
-    const { width, height } = map.dimensions;
-    
-    const positions = [
-      { x: margin, y: margin },
-      { x: width - margin, y: margin },
-      { x: margin, y: height - margin },
-      { x: width - margin, y: height - margin },
-      { x: width / 2, y: height / 2 }
-    ];
+  private isPointInsideRoom(x: number, y: number, map: IndoorMap): boolean {
+    const walls = map.objects.filter(obj => obj.type === 'wall');
+    if (walls.length < 3) return true; // Default to true if not enough walls to form a room
 
-    return positions.map((p, i) => ({
+    // Ray casting algorithm
+    let inside = false;
+    const segments = walls.map(w => {
+      const rad = (w.rotation * Math.PI) / 180;
+      return {
+        x1: w.x,
+        y1: w.y,
+        x2: w.x + w.width * Math.cos(rad),
+        y2: w.y + w.width * Math.sin(rad)
+      };
+    });
+
+    for (let i = 0, j = segments.length - 1; i < segments.length; j = i++) {
+      const xi = segments[i].x1, yi = segments[i].y1;
+      const xj = segments[j].x1, yj = segments[j].y1;
+      
+      const intersect = ((yi > y) !== (yj > y))
+          && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+
+    return inside;
+  }
+
+  private getPointsOnObjects(map: IndoorMap): {x: number, y: number}[] {
+    const validObjects = map.objects.filter(obj => obj.type === 'wall' || obj.type === 'furniture');
+    const points: {x: number, y: number}[] = [];
+
+    validObjects.forEach(obj => {
+      const rad = (obj.rotation * Math.PI) / 180;
+      if (obj.type === 'wall') {
+        // Points along the wall: start, middle, end
+        points.push({ x: obj.x, y: obj.y });
+        points.push({ 
+          x: obj.x + (obj.width / 2) * Math.cos(rad), 
+          y: obj.y + (obj.width / 2) * Math.sin(rad) 
+        });
+        points.push({ 
+          x: obj.x + obj.width * Math.cos(rad), 
+          y: obj.y + obj.width * Math.sin(rad) 
+        });
+      } else {
+        // Center of furniture
+        // Adjust for rotation and dimensions
+        const centerX = obj.x + (obj.width / 2 * Math.cos(rad)) - (obj.height / 2 * Math.sin(rad));
+        const centerY = obj.y + (obj.width / 2 * Math.sin(rad)) + (obj.height / 2 * Math.cos(rad));
+        points.push({ x: centerX, y: centerY });
+      }
+    });
+
+    return points;
+  }
+
+  proposePlacement(map: IndoorMap, model: BLEModel): MapObject[] {
+    const candidates = this.getPointsOnObjects(map);
+    
+    // Filter points that are inside or on the boundary of the room
+    const validCandidates = candidates.filter(p => this.isPointInsideRoom(p.x, p.y, map));
+    
+    // If ray-casting failed on boundaries, fall back to all points on objects
+    const finalCandidates = validCandidates.length > 0 ? validCandidates : candidates;
+
+    if (finalCandidates.length === 0) return [];
+
+    // Pick up to 5 points, attempting to keep them distributed
+    // (Simplification: take first, middle, last and two in between)
+    const count = Math.min(5, finalCandidates.length);
+    const selected: {x: number, y: number}[] = [];
+    
+    for (let i = 0; i < count; i++) {
+      const index = Math.floor(i * (finalCandidates.length - 1) / (count - 1 || 1));
+      selected.push(finalCandidates[index]);
+    }
+
+    return selected.map((p, i) => ({
       id: crypto.randomUUID(),
       type: 'beacon',
       name: `${model.brand} ${model.modelName} #${i + 1}`,
@@ -90,7 +156,7 @@ export class StudyEngineService {
       y: p.y,
       width: 0.3,
       height: 0.3,
-      heightZ: 2.2, // Default ceiling height
+      heightZ: 2.2,
       rotation: 0,
       color: '#007bff',
       metadata: {

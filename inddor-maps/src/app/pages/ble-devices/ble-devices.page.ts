@@ -221,7 +221,7 @@ export class BleDevicesPage {
   async addNewModel() {
     const alert = await this.alertCtrl.create({
       header: 'Añadir Nuevo Modelo BLE',
-      message: 'Introduce las especificaciones técnicas del fabricante.',
+      message: 'Paso 1: Especificaciones Técnicas',
       inputs: [
         { name: 'brand', type: 'text', placeholder: 'Marca (ej: BlueCats)' },
         { name: 'modelName', type: 'text', placeholder: 'Nombre del Modelo' },
@@ -229,28 +229,52 @@ export class BleDevicesPage {
         { name: 'optimalRange', type: 'number', placeholder: 'Distancia Óptima (m)', value: '2.5' },
         { name: 'maxRange', type: 'number', placeholder: 'Distancia Máxima (m)', value: '20' },
         { name: 'precisionScore', type: 'number', placeholder: 'Precisión (1-5)', value: '4' },
-        { name: 'minInterval', type: 'number', placeholder: 'Intervalo Mín (ms)', value: '100' },
-        { name: 'maxInterval', type: 'number', placeholder: 'Intervalo Máx (ms)', value: '1000' },
         { name: 'description', type: 'textarea', placeholder: 'Breve descripción técnica' }
       ],
       buttons: [
         { text: 'Cancelar', role: 'cancel' },
         { 
-          text: 'Añadir al Catálogo', 
-          handler: (data) => {
+          text: 'Siguiente', 
+          handler: (techData) => {
+            this.showVisualCustomization(techData);
+          }
+        }
+      ]
+    });
+    await alert.present();
+  }
+
+  private async showVisualCustomization(techData: any) {
+    const alert = await this.alertCtrl.create({
+      header: 'Personalización Visual',
+      message: 'Paso 2: Identificación en el Mapa',
+      inputs: [
+        { name: 'color', type: 'text', placeholder: 'Color (Hex, ej: #FF0000)', value: '#007bff' },
+        { name: 'shape', type: 'radio', label: 'Círculo', value: 'circle', checked: true },
+        { name: 'shape', type: 'radio', label: 'Cuadrado', value: 'rect' },
+        { name: 'shape', type: 'radio', label: 'Triángulo', value: 'triangle' },
+        { name: 'shape', type: 'radio', label: 'Estrella', value: 'star' }
+      ],
+      buttons: [
+        { text: 'Atrás', handler: () => this.addNewModel() },
+        {
+          text: 'Guardar Modelo',
+          handler: (visualData) => {
             const newModel: BLEModel = {
               id: crypto.randomUUID(),
-              brand: data.brand,
-              modelName: data.modelName,
-              defaultTxPower: parseFloat(data.defaultTxPower),
-              optimalRange: parseFloat(data.optimalRange),
-              maxRange: parseFloat(data.maxRange),
-              precisionScore: parseInt(data.precisionScore),
-              minInterval: parseInt(data.minInterval),
-              maxInterval: parseInt(data.maxInterval),
-              description: data.description,
-              supportedProtocols: ['iBeacon'], // Default
-              estimatedBatteryLife: 'Variable'
+              brand: techData.brand,
+              modelName: techData.modelName,
+              defaultTxPower: parseFloat(techData.defaultTxPower),
+              optimalRange: parseFloat(techData.optimalRange),
+              maxRange: parseFloat(techData.maxRange),
+              precisionScore: parseInt(techData.precisionScore),
+              minInterval: 100,
+              maxInterval: 1000,
+              description: techData.description,
+              supportedProtocols: ['iBeacon'],
+              estimatedBatteryLife: 'Variable',
+              defaultColor: visualData.color || '#007bff',
+              defaultShape: visualData.shape || 'circle'
             };
             this.catalogService.addModel(newModel);
           }

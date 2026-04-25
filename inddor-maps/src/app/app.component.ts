@@ -15,7 +15,7 @@ import {
   IonLabel 
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { mapOutline, bluetoothOutline, analyticsOutline } from 'ionicons/icons';
+import { mapOutline, bluetoothOutline, analyticsOutline, buildOutline, eyeOutline } from 'ionicons/icons';
 
 @Component({
   selector: 'app-root',
@@ -39,6 +39,6 @@ import { mapOutline, bluetoothOutline, analyticsOutline } from 'ionicons/icons';
 })
 export class AppComponent {
   constructor() {
-    addIcons({ mapOutline, bluetoothOutline, analyticsOutline });
+    addIcons({ mapOutline, bluetoothOutline, analyticsOutline, buildOutline, eyeOutline });
   }
 }
